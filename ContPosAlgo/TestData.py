@@ -84,8 +84,7 @@ def make_synthetic_blobs(tvec_m, rvec=None):
 # Test 1 – parse_packet: valid full packet
 # ===========================================================================
 print("\n=== Test 1: parse_packet — valid 4-blob packet ===")
-line = "100.5,200.3,700.0,150.8,680.2,600.1,120.9,590.4"
-blobs = parse_packet(line)
+blobs, _ = parse_packet("100.5,200.3,700.0,150.8,680.2,600.1,120.9,590.4,1")
 check("Returns 4 blobs", blobs is not None and len(blobs) == 4)
 check("First blob x correct", abs(blobs[0][0] - 100.5) < 1e-6)
 check("Fourth blob y correct", abs(blobs[3][1] - 590.4) < 1e-6)
@@ -95,8 +94,7 @@ check("Fourth blob y correct", abs(blobs[3][1] - 590.4) < 1e-6)
 # Test 2 – parse_packet: partial visibility (2 blobs hidden)
 # ===========================================================================
 print("\n=== Test 2: parse_packet — 2 blobs hidden (-1,-1) ===")
-line = "100.0,200.0,-1,-1,680.0,600.0,-1,-1"
-blobs = parse_packet(line)
+blobs, _ = parse_packet("100.0,200.0,-1,-1,680.0,600.0,-1,-1,0")
 check("Returns 2 visible blobs", blobs is not None and len(blobs) == 2)
 
 
@@ -104,10 +102,10 @@ check("Returns 2 visible blobs", blobs is not None and len(blobs) == 2)
 # Test 3 – parse_packet: malformed input
 # ===========================================================================
 print("\n=== Test 3: parse_packet — malformed / garbage input ===")
-check("Empty string → None",     parse_packet("") is None)
-check("Too few values → None",   parse_packet("1,2,3") is None)
-check("Non-numeric → None",      parse_packet("a,b,c,d,e,f,g,h") is None)
-check("Trailing newline handled", parse_packet("10,20,30,40,50,60,70,80\n") is not None)
+check("Empty string → None",     parse_packet("")[0] is None)
+check("Too few values → None",   parse_packet("1,2,3")[0] is None)
+check("Non-numeric → None",      parse_packet("a,b,c,d,e,f,g,h,0")[0] is None)
+check("Trailing newline handled", parse_packet("10,20,30,40,50,60,70,80,0\n")[0] is not None)
 
 
 # ===========================================================================
@@ -228,6 +226,66 @@ if screen_xy:
     check("Aim near screen centre", abs(x - 0.5) < 0.05 and abs(y - 0.5) < 0.05,
           f"x={x:.3f} y={y:.3f}")
 
+# Quick mouse movement test
+print("\n=== Mouse Movement Test ===")
+print("Watch your mouse cursor - it should move to the centre of your screen")
+import time
+time.sleep(2)
+
+tx = 1 / 2 #position adjustments made here
+ty = 1 / 2 
+tz = 1
+mouse_blobs = make_synthetic_blobs([tx, ty, tz])
+rvec, tvec, screen_xy = solveController(mouse_blobs)
+
+from Algo import on_pose_solved
+on_pose_solved(screen_xy)
+print(f"Mouse moved to fraction: x={screen_xy[0]:.3f} y={screen_xy[1]:.3f}")
+
+
+# ===========================================================================
+# Test 11 – Button press parsing
+# ===========================================================================
+print("\n=== Test 11: parse_packet — button state ===")
+blobs, button = parse_packet("100.5,200.3,700.0,150.8,680.2,600.1,120.9,590.4,0")
+check("No button press parses correctly", button == 0)
+
+blobs, button = parse_packet("100.5,200.3,700.0,150.8,680.2,600.1,120.9,590.4,1")
+check("Button press parses correctly", button == 1)
+check("Button press parses correctly", button == 1)
+
+check("Blobs still parsed with button field", blobs is not None and len(blobs) == 4)
+
+blobs, button = parse_packet("100.5,200.3,700.0,150.8,680.2,600.1,120.9,590.4")
+check("Old 8-value packet rejected gracefully", blobs is None and button == 0)
+
+
+# ===========================================================================
+# Test 12 – Button press moves mouse and clicks
+# ===========================================================================
+print("\n=== Test 12: Button press — mouse click ===")
+print("  Watch your mouse — it should click in 2 seconds...")
+import time
+time.sleep(2)
+
+from Algo import on_pose_solved, onButton
+import pyautogui
+
+# Move to centre first
+tx = -LED_SPACING_X / 2
+ty = -LED_SPACING_Y / 2
+tz = 1.5
+blobs, _ = parse_packet("100.5,200.3,700.0,150.8,680.2,600.1,120.9,590.4,0")
+blobs = make_synthetic_blobs([tx, ty, tz])
+rvec, tvec, screen_xy = solveController(blobs)
+on_pose_solved(screen_xy)
+
+# Now fire the button
+onButton(1)
+check("Button 1 triggers click without crash", True)
+
+onButton(0)
+check("Button 0 does nothing without crash", True)
 
 # ===========================================================================
 # Summary
@@ -242,3 +300,4 @@ if passed < total:
 else:
     print("  All checks passed — safe to move on to hardware integration.")
 print("=" * 50 + "\n")
+

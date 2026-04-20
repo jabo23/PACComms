@@ -3,6 +3,9 @@ Receives IR camera blob data over Bluetooth from ESP32,
 solves PnP with OpenCV to determine gun pose in 3D space.
 
     pip install opencv-python-headless numpy pyserial
+    pip install pyautogui
+    py -m pip install pyautogui
+
     python3 -c "import cv2, numpy; print(cv2.__version__, numpy.__version__) to verify
     python3 -c "import serial; print(serial.__version__) to verify
 
@@ -27,6 +30,7 @@ import serial
 import time
 import sys
 import logging
+import pyautogui
 
 logging.basicConfig(
     level=logging.INFO,
@@ -45,6 +49,10 @@ BAUD_RATE     = 115200          # Must match ESP32 Serial.begin()
 # https://pmc.ncbi.nlm.nih.gov/articles/PMC7218719/ this better be right
 SENSOR_W = 1024
 SENSOR_H = 768
+
+pyautogui.FAILSAFE = False # prevents crash at corners
+
+SCREEN_W, SCREEN_H = pyautogui.size() #gets screen resolution
 
 # Physical IR LED positions in the WORLD frame (metres, origin = top-left LED).
 LED_SPACING_X = 0.20   # metres between left and right LEDs
@@ -79,17 +87,19 @@ def parse_packet(line: str):
     Returns None if the line is malformed.
     """
     try:
-        values = [float(v) for v in line.strip().split(",")]
-        if len(values) != 8:
-            return None
+        values = line.strip().split(",")
+        if len(values) != 9:
+            return None, 0
+        coords = [float(v) for v in values[:8]]
+        button = int(values[8])  # 0 or 1
         blobs = []
         for i in range(0, 8, 2):
-            x, y = values[i], values[i + 1]
-            if x >= 0 and y >= 0:          
+            x, y = coords[i], coords[i + 1]
+            if x >= 0 and y >= 0:
                 blobs.append((x, y))
-        return blobs
+        return blobs, button
     except ValueError:
-        return None
+        return None, 0
 
 
 def solveController(blobs):
@@ -154,6 +164,21 @@ def sort_quad(blobs):
     return np.array([top[0], top[1], bottom[1], bottom[0]], dtype=np.float64)
 
 
+def on_pose_solved(screen_xy):
+    x_frac, y_frac = screen_xy
+    x_frac = max(0.0, min(1.0, x_frac))
+    y_frac = max(0.0, min(1.0, y_frac))
+    px = int(x_frac * SCREEN_W)
+    py = int(y_frac * SCREEN_H)
+    pyautogui.moveTo(px, py, _pause=False)
+
+def onButton(button: int):
+    if button == 1:
+        pyautogui.click(_pause=False)
+
+def on_no_lock():
+    pass
+
 def run_bluetooth():
     """Open the Bluetooth serial port and process incoming data."""
     log.info("Opening %s at %d baud...", SERIAL_PORT, BAUD_RATE)
@@ -167,6 +192,7 @@ def run_bluetooth():
     log.info("Connected. Waiting for data...")
     frames = 0
     t0 = time.time()
+
 
     try:
         while True:
@@ -185,9 +211,9 @@ def run_bluetooth():
             rvec, tvec, screen_xy = solveController(blobs)
 
             if screen_xy is not None:
-                on_pose_solved(rvec, tvec, screen_xy)  #tbd
+                on_pose_solved(screen_xy)  
             else: 
-                on_no_lock() #tbd
+                on_no_lock() 
 
             frames += 1
             elapsed = time.time() - t0
