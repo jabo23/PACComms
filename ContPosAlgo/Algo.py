@@ -199,11 +199,12 @@ class Connection:
 
 stop_event = asyncio.Event()
 
-q = queue.Queue()
+dataq = queue.Queue()
+mouseq = queue.Queue()
 
 def worker():
     while True:
-        data: bytearray = q.get()
+        data: bytearray = dataq.get()
         print('Processing packet')
 
         blobs, button = parse_packet(data)
@@ -213,20 +214,29 @@ def worker():
 
         rvec, tvec, screen_xy = solveController(blobs)
 
+        mouseq.put((screen_xy, button))
+        dataq.task_done()
+
+def mouser():
+    while True:
+        screen_xy, button = mouseq.get()
+
         if screen_xy is not None:
             onButton(button)
             on_pose_solved(screen_xy)
         else:
             on_no_lock()
 
-        q.task_done()
+        mouseq.task_done()
+        pass
+
 
 
 def on_recv(sender: BleakGATTCharacteristic, data: bytearray):
     t0 = time.time()
     # print(f'From {sender}: {parse_packet(data)}')
-    print(f'Recieved packet! Queue length: {q.qsize()}')
-    q.put(data)
+    print(f'Recieved packet! Queue length: {dataq.qsize()}')
+    dataq.put(data)
     
     # blobs, button = parse_packet(data)
     # if blobs is None:
@@ -270,7 +280,9 @@ async def run_bluetooth():
 
 
 if __name__ == "__main__":
-    threading.Thread(target=worker, daemon=True).start()
+    for i in range(4):
+        threading.Thread(target=worker, daemon=True).start()
+    threading.Thread(target=mouser, daemon=True).start()
     try:
         asyncio.run(run_bluetooth())
     except KeyboardInterrupt:
