@@ -26,8 +26,6 @@ then on the last session manually send dummy data ex: echo "100,100 100,100 100,
 """
 import cv2
 import numpy as np
-import serial
-import time
 import sys
 import logging
 import pyautogui
