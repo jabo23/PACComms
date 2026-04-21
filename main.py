@@ -33,7 +33,10 @@ async def main():
 
 
 
+                # positions
                 await connection.start_notify('0f1d2b39-4755-6371-8f9d-abb9c7d5e3f1', recv)
+
+                # button
                 await connection.start_notify('ffeddbc9-b7a5-9381-7f6d-5b4937251301', recv)
                 print('yes')
                 await eve.wait()
