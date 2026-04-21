@@ -31,6 +31,9 @@ import logging
 import pyautogui
 import asyncio
 from bleak import *
+import time
+import threading
+import queue
 
 logging.basicConfig(
     level=logging.INFO,
@@ -196,21 +199,51 @@ class Connection:
 
 stop_event = asyncio.Event()
 
+q = queue.Queue()
+
+def worker():
+    while True:
+        data: bytearray = q.get()
+        print('Processing packet')
+
+        blobs, button = parse_packet(data)
+        if blobs is None:
+            log.warning("Malformed packet: %r", data)
+            return
+
+        rvec, tvec, screen_xy = solveController(blobs)
+
+        if screen_xy is not None:
+            onButton(button)
+            on_pose_solved(screen_xy)
+        else:
+            on_no_lock()
+
+        q.task_done()
+
+
 def on_recv(sender: BleakGATTCharacteristic, data: bytearray):
-    print(f'From {sender}: {parse_packet(data)}')
+    t0 = time.time()
+    # print(f'From {sender}: {parse_packet(data)}')
+    print(f'Recieved packet! Queue length: {q.qsize()}')
+    q.put(data)
     
-    blobs, button = parse_packet(data)
-    if blobs is None:
-        log.warning("Malformed packet: %r", data)
-        return
+    # blobs, button = parse_packet(data)
+    # if blobs is None:
+    #     log.warning("Malformed packet: %r", data)
+    #     return
 
-    rvec, tvec, screen_xy = solveController(blobs)
+    # rvec, tvec, screen_xy = solveController(blobs)
 
-    if screen_xy is not None:
-        onButton(button)
-        on_pose_solved(screen_xy)
-    else:
-        on_no_lock()
+    # if screen_xy is not None:
+    #     onButton(button)
+    #     on_pose_solved(screen_xy)
+    # else:
+    #     on_no_lock()
+
+    # t1 = time.time()
+
+    # print(t1 - t0)
 
 async def run_bluetooth():
 
@@ -237,6 +270,7 @@ async def run_bluetooth():
 
 
 if __name__ == "__main__":
+    threading.Thread(target=worker, daemon=True).start()
     try:
         asyncio.run(run_bluetooth())
     except KeyboardInterrupt:
