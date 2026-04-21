@@ -52,6 +52,7 @@ SENSOR_W = 1024
 SENSOR_H = 768
 
 pyautogui.FAILSAFE = False # prevents crash at corners
+pyautogui.PAUSE = 0 # because pyautogui is SLOOOOWWWWWWW by default for some reason
 
 SCREEN_W, SCREEN_H = pyautogui.size() #gets screen resolution
 
@@ -200,7 +201,6 @@ class Connection:
 stop_event = asyncio.Event()
 
 dataq = queue.Queue()
-mouseq = queue.Queue()
 
 def worker():
     while True:
@@ -214,46 +214,19 @@ def worker():
 
         rvec, tvec, screen_xy = solveController(blobs)
 
-        mouseq.put((screen_xy, button))
-        dataq.task_done()
-
-def mouser():
-    while True:
-        screen_xy, button = mouseq.get()
-
         if screen_xy is not None:
             onButton(button)
             on_pose_solved(screen_xy)
         else:
             on_no_lock()
-
-        mouseq.task_done()
-        pass
-
-
+        
+        dataq.task_done()
 
 def on_recv(sender: BleakGATTCharacteristic, data: bytearray):
     t0 = time.time()
     # print(f'From {sender}: {parse_packet(data)}')
-    print(f'Recieved packet! Queue length: {dataq.qsize()}')
+    # print(f'Recieved packet! Queue length: {dataq.qsize()}')
     dataq.put(data)
-    
-    # blobs, button = parse_packet(data)
-    # if blobs is None:
-    #     log.warning("Malformed packet: %r", data)
-    #     return
-
-    # rvec, tvec, screen_xy = solveController(blobs)
-
-    # if screen_xy is not None:
-    #     onButton(button)
-    #     on_pose_solved(screen_xy)
-    # else:
-    #     on_no_lock()
-
-    # t1 = time.time()
-
-    # print(t1 - t0)
 
 async def run_bluetooth():
 
@@ -282,7 +255,6 @@ async def run_bluetooth():
 if __name__ == "__main__":
     for i in range(4):
         threading.Thread(target=worker, daemon=True).start()
-    threading.Thread(target=mouser, daemon=True).start()
     try:
         asyncio.run(run_bluetooth())
     except KeyboardInterrupt:
