@@ -61,7 +61,7 @@ def check(name, condition, detail=""):
     print(f"  [{status}] {name}" + (f" — {detail}" if detail else ""))
 
 
-def make_hex_packet(button: int, coords: list) -> bytes:
+def make_hex_packet(button: int, coords: list) -> bytearray:
     """
     Helper to build a fake ESP32 packet as bytes.
     button: 0 or 1
@@ -71,12 +71,12 @@ def make_hex_packet(button: int, coords: list) -> bytes:
     Hidden blobs use FF as a sentinel — parse_packet treats negatives as hidden,
     so we encode -1 as the string "-1" directly for simplicity.
     """
-    parts = [f"{button:02X}"]
+    parts = [f"{button:02X}", "00", "00", "00"]
     for v in coords:
         if v < 0:
-            parts.append("-1")
-        else:
-            parts.append(f"{v:03X}")
+            v = 3000
+        parts.append(f"{(v & 0xFF):02X}")
+        parts.append(f"{((v >> 8) & 0xFF):02X}")
     return ",".join(parts).encode("ascii")
 
 

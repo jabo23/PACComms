@@ -80,7 +80,7 @@ CAMERA_MATRIX = np.array([
 DIST_COEFFS = np.zeros((4, 1), dtype=np.float64)
 
 
-def parse_packet(data: bytes):
+def parse_packet(data: bytearray):
     """
     Parse a byte array of 9 comma-separated hex values: button,x1,y1,x2,y2,x3,y3,x4,y4
     button is 0x00 or 0x01
@@ -90,14 +90,15 @@ def parse_packet(data: bytes):
     try:
         line = data.decode("ascii", errors="ignore").strip()
         values = line.split(",")
-        if len(values) != 9:
+        if len(values) != 20:
             return None, 0
         button = int(values[0], 16)
-        coords = [int(v, 16) for v in values[1:]]
+        coords = [int(v, 16) for v in values[4:]]
         blobs = []
-        for i in range(0, 8, 2):
-            x, y = coords[i], coords[i + 1]
-            if x >= 0 and y >= 0:
+        for i in range(0, 16, 4):
+            x = coords[i + 0] + coords[i + 1] * 256
+            y = coords[i + 2] + coords[i + 3] * 256
+            if x < 2000 and y < 2000:
                 blobs.append((x, y))
         return blobs, button
     except ValueError:
