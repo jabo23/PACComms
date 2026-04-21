@@ -1,19 +1,24 @@
-
-
 """
-test_lightgun_processor.py
-Dummy-data test suite for lightgun_processor.py
+TestData.py
+Dummy-data test suite for Algo.py
 Run on any machine with OpenCV and NumPy installed - no hardware needed.
 
 Usage:
-    python test_lightgun_processor.py
+    py TestData.py
 
 Each test prints PASS or FAIL with details.
+
+Packet format (bytes, comma separated hex values):
+    button,x1,y1,x2,y2,x3,y3,x4,y4
+    example: b"00,064,0C8,02BC,096,02A8,258,078,24E"
 """
+
+print("SCRIPT STARTED")
 
 import numpy as np
 import sys
 import math
+import time
 
 # ---------------------------------------------------------------------------
 # Import the processor module (same directory expected)
@@ -30,13 +35,16 @@ try:
         LED_SPACING_Y,
         SENSOR_W,
         SENSOR_H,
+        on_pose_solved,
+        onButton,
     )
 except ImportError as e:
-    print(f"[ERROR] Could not import lightgun_processor: {e}")
-    print("Make sure lightgun_processor.py is in the same directory.")
+    print(f"[ERROR] Could not import Algo: {e}")
+    print("Make sure Algo.py is in the same directory.")
     sys.exit(1)
 
 import cv2
+import pyautogui
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -51,6 +59,25 @@ def check(name, condition, detail=""):
     status = PASS if condition else FAIL
     results.append(condition)
     print(f"  [{status}] {name}" + (f" — {detail}" if detail else ""))
+
+
+def make_hex_packet(button: int, coords: list) -> bytes:
+    """
+    Helper to build a fake ESP32 packet as bytes.
+    button: 0 or 1
+    coords: list of 8 integers [x1,y1,x2,y2,x3,y3,x4,y4] in decimal
+            (-1 means blob not visible)
+    Returns bytes like b"00,064,0C8,02BC,096,FFFF,FFFF,078,24E"
+    Hidden blobs use FF as a sentinel — parse_packet treats negatives as hidden,
+    so we encode -1 as the string "-1" directly for simplicity.
+    """
+    parts = [f"{button:02X}"]
+    for v in coords:
+        if v < 0:
+            parts.append("-1")
+        else:
+            parts.append(f"{v:03X}")
+    return ",".join(parts).encode("ascii")
 
 
 # ---------------------------------------------------------------------------
@@ -80,39 +107,66 @@ def make_synthetic_blobs(tvec_m, rvec=None):
     return [(float(p[0]), float(p[1])) for p in pts]
 
 
+def blobs_to_hex_packet(blobs, button=0) -> bytes:
+    """
+    Convert a list of (x,y) float blobs into a hex byte packet.
+    Rounds floats to nearest int for encoding.
+    """
+    coords = []
+    for (x, y) in blobs:
+        coords += [int(round(x)), int(round(y))]
+    # pad to 8 values if fewer than 4 blobs
+    while len(coords) < 8:
+        coords += [-1, -1]
+    return make_hex_packet(button, coords[:8])
+
+
 # ===========================================================================
-# Test 1 – parse_packet: valid full packet
+# Test 1 – parse_packet: valid full packet, no button press
 # ===========================================================================
-print("\n=== Test 1: parse_packet — valid 4-blob packet ===")
-blobs, _ = parse_packet("100.5,200.3,700.0,150.8,680.2,600.1,120.9,590.4,1")
+print("\n=== Test 1: parse_packet — valid 4-blob packet, no button ===")
+# 100,200,700,150,680,600,120,590 in hex = 064,0C8,2BC,096,2A8,258,078,24E
+packet = make_hex_packet(0, [0x064, 0x0C8, 0x2BC, 0x096, 0x2A8, 0x258, 0x078, 0x24E])
+blobs, button = parse_packet(packet)
 check("Returns 4 blobs", blobs is not None and len(blobs) == 4)
-check("First blob x correct", abs(blobs[0][0] - 100.5) < 1e-6)
-check("Fourth blob y correct", abs(blobs[3][1] - 590.4) < 1e-6)
+check("Button is 0", button == 0)
+check("First blob x is 100", abs(blobs[0][0] - 100) < 1)
+check("Fourth blob y is 590", abs(blobs[3][1] - 590) < 1)
 
 
 # ===========================================================================
-# Test 2 – parse_packet: partial visibility (2 blobs hidden)
+# Test 2 – parse_packet: valid full packet, button pressed
 # ===========================================================================
-print("\n=== Test 2: parse_packet — 2 blobs hidden (-1,-1) ===")
-blobs, _ = parse_packet("100.0,200.0,-1,-1,680.0,600.0,-1,-1,0")
+print("\n=== Test 2: parse_packet — valid 4-blob packet, button pressed ===")
+packet = make_hex_packet(1, [0x064, 0x0C8, 0x2BC, 0x096, 0x2A8, 0x258, 0x078, 0x24E])
+blobs, button = parse_packet(packet)
+check("Returns 4 blobs", blobs is not None and len(blobs) == 4)
+check("Button is 1", button == 1)
+
+
+# ===========================================================================
+# Test 3 – parse_packet: partial visibility (2 blobs hidden)
+# ===========================================================================
+print("\n=== Test 3: parse_packet — 2 blobs hidden (-1) ===")
+packet = make_hex_packet(0, [0x064, 0x0C8, -1, -1, 0x2A8, 0x258, -1, -1])
+blobs, button = parse_packet(packet)
 check("Returns 2 visible blobs", blobs is not None and len(blobs) == 2)
 
 
 # ===========================================================================
-# Test 3 – parse_packet: malformed input
+# Test 4 – parse_packet: malformed input
 # ===========================================================================
-print("\n=== Test 3: parse_packet — malformed / garbage input ===")
-check("Empty string → None",     parse_packet("")[0] is None)
-check("Too few values → None",   parse_packet("1,2,3")[0] is None)
-check("Non-numeric → None",      parse_packet("a,b,c,d,e,f,g,h,0")[0] is None)
-check("Trailing newline handled", parse_packet("10,20,30,40,50,60,70,80,0\n")[0] is not None)
+print("\n=== Test 4: parse_packet — malformed / garbage input ===")
+check("Empty bytes → None",        parse_packet(b"")[0] is None)
+check("Too few values → None",     parse_packet(b"00,064,0C8")[0] is None)
+check("Non-hex values → None",     parse_packet(b"ZZ,QQQ,RRR,SSS,TTT,UUU,VVV,WWW,XXX")[0] is None)
+check("Trailing newline handled",  parse_packet(b"00,064,0C8,2BC,096,2A8,258,078,24E\n")[0] is not None)
 
 
 # ===========================================================================
-# Test 4 – sort_quad: correct spatial ordering
+# Test 5 – sort_quad: correct spatial ordering
 # ===========================================================================
-print("\n=== Test 4: sort_quad — corner ordering ===")
-# Deliberately shuffled order: bottom-right, top-left, bottom-left, top-right
+print("\n=== Test 5: sort_quad — corner ordering ===")
 shuffled = [(900, 700), (100, 100), (100, 700), (900, 100)]
 sorted_pts = sort_quad(shuffled)
 check("Top-left  is (100,100)", tuple(sorted_pts[0]) == (100.0, 100.0))
@@ -122,10 +176,9 @@ check("Bot-left  is (100,700)", tuple(sorted_pts[3]) == (100.0, 700.0))
 
 
 # ===========================================================================
-# Test 5 – solveController: centred shot (gun pointing straight ahead)
+# Test 6 – solveController: centred shot
 # ===========================================================================
-print("\n=== Test 5: solveController — centred, straight-on shot ===")
-# Place LEDs 1.5 m in front of camera, centred
+print("\n=== Test 6: solveController — centred, straight-on shot ===")
 tx = -LED_SPACING_X / 2
 ty = -LED_SPACING_Y / 2
 tz = 1.5
@@ -135,18 +188,16 @@ rvec, tvec, screen_xy = solveController(blobs)
 check("Solve succeeds", rvec is not None)
 if rvec is not None:
     dist = float(np.linalg.norm(tvec))
-    check("Distance roughly 1.5 m", abs(dist - 1.5) < 0.15,
-          f"got {dist:.3f} m")
+    check("Distance roughly 1.5 m", abs(dist - 1.5) < 0.15, f"got {dist:.3f} m")
     x, y = screen_xy
     check("Aim X near centre (0.5)", abs(x - 0.5) < 0.05, f"x={x:.3f}")
     check("Aim Y near centre (0.5)", abs(y - 0.5) < 0.05, f"y={y:.3f}")
 
 
 # ===========================================================================
-# Test 6 – solveController: off-centre shot (top-left quadrant)
+# Test 7 – solveController: off-centre shot (top-left quadrant)
 # ===========================================================================
-print("\n=== Test 6: solveController — aiming top-left ===")
-# Shift the LED array so centre projects into top-left of sensor
+print("\n=== Test 7: solveController — aiming top-left ===")
 tx = -LED_SPACING_X / 2 - 0.10
 ty = -LED_SPACING_Y / 2 - 0.06
 tz = 1.5
@@ -161,31 +212,31 @@ if rvec is not None:
 
 
 # ===========================================================================
-# Test 7 – solveController: only4 3 blobs visible
+# Test 8 – solveController: only 3 blobs visible
 # ===========================================================================
-print("\n=== Test 7: solveController — 3 blobs (1 occluded) ===")
+print("\n=== Test 8: solveController — 3 blobs (1 occluded) ===")
 tx = -LED_SPACING_X / 2
 ty = -LED_SPACING_Y / 2
 tz = 1.5
 blobs_4 = make_synthetic_blobs([tx, ty, tz])
-blobs_3  = blobs_4[:3]   # drop fourth blob
+blobs_3 = blobs_4[:3]
 rvec, tvec, screen_xy = solveController(blobs_3)
-check("Solve still attempts with 3 blobs", True,  # just shouldn't crash
+check("Solve still attempts with 3 blobs", True,
       "returned None is acceptable" if rvec is None else "got a result")
 
 
 # ===========================================================================
-# Test 8 – solveController: fewer than MIN_BLOBS → graceful failure
+# Test 9 – solveController: fewer than minimum blobs
 # ===========================================================================
-print("\n=== Test 8: solveController — 1 blob (below minimum) ===")
+print("\n=== Test 9: solveController — 1 blob (below minimum) ===")
 rvec, tvec, screen_xy = solveController([(512.0, 384.0)])
 check("Returns (None,None,None)", rvec is None and tvec is None and screen_xy is None)
 
 
 # ===========================================================================
-# Test 9 – solveController: slight rotational tilt
+# Test 10 – solveController: 5° yaw tilt
 # ===========================================================================
-print("\n=== Test 9: solveController — 5° yaw tilt ===")
+print("\n=== Test 10: solveController — 5° yaw tilt ===")
 yaw_deg = 5.0
 rvec_gt = np.array([[0.0], [math.radians(yaw_deg)], [0.0]], dtype=np.float64)
 tx = -LED_SPACING_X / 2
@@ -196,96 +247,75 @@ blobs = [(float(p[0]), float(p[1])) for p in project_world_to_image(WORLD_POINTS
 rvec, tvec, screen_xy = solveController(blobs)
 check("Solve succeeds with tilt", rvec is not None)
 if rvec is not None:
-    # Recovered yaw should be close to ground truth
     recovered_yaw_deg = math.degrees(float(rvec[1][0]))
     check("Yaw recovered within 2°", abs(recovered_yaw_deg - yaw_deg) < 2.0,
           f"gt={yaw_deg:.1f}° recovered={recovered_yaw_deg:.2f}°")
 
 
 # ===========================================================================
-# Test 10 – Full pipeline simulation (parse → solve)
+# Test 11 – Full pipeline: hex bytes → parse → solve
 # ===========================================================================
-print("\n=== Test 10: End-to-end pipeline — serial line → aim point ===")
-# Build a synthetic serial line for a centred shot
+print("\n=== Test 11: End-to-end pipeline — hex bytes → aim point ===")
 tx = -LED_SPACING_X / 2
 ty = -LED_SPACING_Y / 2
 tz = 1.5
 real_blobs = make_synthetic_blobs([tx, ty, tz])
-# Serialise to the CSV format the ESP32 would send
-csv_parts = []
-for (bx, by) in real_blobs:
-    csv_parts += [f"{bx:.2f}", f"{by:.2f}"]
-serial_line = ",".join(csv_parts)
+packet = blobs_to_hex_packet(real_blobs, button=0)
 
-parsed = parse_packet(serial_line)
-check("Packet parses correctly", parsed is not None and len(parsed) == 4)
-rvec, tvec, screen_xy = solveController(parsed)
+blobs, button = parse_packet(packet)
+check("Packet parses correctly", blobs is not None and len(blobs) == 4)
+check("Button is 0", button == 0)
+
+rvec, tvec, screen_xy = solveController(blobs)
 check("Pipeline produces aim point", screen_xy is not None)
 if screen_xy:
     x, y = screen_xy
     check("Aim near screen centre", abs(x - 0.5) < 0.05 and abs(y - 0.5) < 0.05,
           f"x={x:.3f} y={y:.3f}")
 
-# Quick mouse movement test
+
+# ===========================================================================
+# Test 12 – Button state in pipeline
+# ===========================================================================
+print("\n=== Test 12: End-to-end pipeline — button pressed ===")
+packet = blobs_to_hex_packet(real_blobs, button=1)
+blobs, button = parse_packet(packet)
+check("Button 1 parsed from pipeline packet", button == 1)
+check("Blobs still valid with button=1", blobs is not None and len(blobs) == 4)
+
+
+# ===========================================================================
+# Mouse movement test
+# ===========================================================================
 print("\n=== Mouse Movement Test ===")
-print("Watch your mouse cursor - it should move to the centre of your screen")
-import time
+print("  Watch your mouse — it should move to screen centre in 2 seconds...")
 time.sleep(2)
 
-tx = 1 / 2 #position adjustments made here
-ty = 1 / 2 
-tz = 1
-mouse_blobs = make_synthetic_blobs([tx, ty, tz])
-rvec, tvec, screen_xy = solveController(mouse_blobs)
-
-from Algo import on_pose_solved
-on_pose_solved(screen_xy)
-print(f"Mouse moved to fraction: x={screen_xy[0]:.3f} y={screen_xy[1]:.3f}")
-
-
-# ===========================================================================
-# Test 11 – Button press parsing
-# ===========================================================================
-print("\n=== Test 11: parse_packet — button state ===")
-blobs, button = parse_packet("100.5,200.3,700.0,150.8,680.2,600.1,120.9,590.4,0")
-check("No button press parses correctly", button == 0)
-
-blobs, button = parse_packet("100.5,200.3,700.0,150.8,680.2,600.1,120.9,590.4,1")
-check("Button press parses correctly", button == 1)
-check("Button press parses correctly", button == 1)
-
-check("Blobs still parsed with button field", blobs is not None and len(blobs) == 4)
-
-blobs, button = parse_packet("100.5,200.3,700.0,150.8,680.2,600.1,120.9,590.4")
-check("Old 8-value packet rejected gracefully", blobs is None and button == 0)
-
-
-# ===========================================================================
-# Test 12 – Button press moves mouse and clicks
-# ===========================================================================
-print("\n=== Test 12: Button press — mouse click ===")
-print("  Watch your mouse — it should click in 2 seconds...")
-import time
-time.sleep(2)
-
-from Algo import on_pose_solved, onButton
-import pyautogui
-
-# Move to centre first
 tx = -LED_SPACING_X / 2
 ty = -LED_SPACING_Y / 2
 tz = 1.5
-blobs, _ = parse_packet("100.5,200.3,700.0,150.8,680.2,600.1,120.9,590.4,0")
-blobs = make_synthetic_blobs([tx, ty, tz])
-rvec, tvec, screen_xy = solveController(blobs)
-on_pose_solved(screen_xy)
+mouse_blobs = make_synthetic_blobs([tx, ty, tz])
+rvec, tvec, screen_xy = solveController(mouse_blobs)
+if screen_xy:
+    on_pose_solved(screen_xy)
+    print(f"  Mouse moved to fraction: x={screen_xy[0]:.3f} y={screen_xy[1]:.3f}")
+else:
+    print("  [WARN] Could not solve pose for mouse test")
 
-# Now fire the button
+
+# ===========================================================================
+# Test 13 – Button click test
+# ===========================================================================
+print("\n=== Test 13: Button press — mouse click ===")
+print("  Mouse will click in 2 seconds — make sure nothing important is under cursor...")
+time.sleep(2)
+
 onButton(1)
 check("Button 1 triggers click without crash", True)
 
 onButton(0)
 check("Button 0 does nothing without crash", True)
+
 
 # ===========================================================================
 # Summary
@@ -301,3 +331,4 @@ else:
     print("  All checks passed — safe to move on to hardware integration.")
 print("=" * 50 + "\n")
 
+input("Press Enter to exit...")

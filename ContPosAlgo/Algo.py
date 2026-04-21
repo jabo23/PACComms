@@ -80,18 +80,20 @@ CAMERA_MATRIX = np.array([
 DIST_COEFFS = np.zeros((4, 1), dtype=np.float64)
 
 
-def parse_packet(line: str):
+def parse_packet(data: bytes):
     """
-    Parse a CSV line of 8 floats: x1,y1,x2,y2,x3,y3,x4,y4
-    Returns a list of (x, y) tuples for visible blobs (coords != -1).
-    Returns None if the line is malformed.
+    Parse a byte array of 9 comma-separated hex values: button,x1,y1,x2,y2,x3,y3,x4,y4
+    button is 0x00 or 0x01
+    coords are hex integers representing pixel positions
+    Returns (blobs, button) or (None, 0) if malformed.
     """
     try:
-        values = line.strip().split(",")
+        line = data.decode("ascii", errors="ignore").strip()
+        values = line.split(",")
         if len(values) != 9:
             return None, 0
-        coords = [float(v) for v in values[:8]]
-        button = int(values[8])  # 0 or 1
+        button = int(values[0], 16)
+        coords = [int(v, 16) for v in values[1:]]
         blobs = []
         for i in range(0, 8, 2):
             x, y = coords[i], coords[i + 1]
@@ -199,22 +201,26 @@ def run_bluetooth():
             raw = ser.readline()
             if not raw:
                 continue
-            line = raw.decode("ascii", errors="ignore").strip()
-            if not line:
+
+            blobs, button = parse_packet(raw)
+            if not raw:
                 continue
 
-            blobs = parse_packet(line)
+            blobs, button = parse_packet(raw)
             if blobs is None:
-                log.warning("Malformed packet: %r", line)
+                log.warning("Malformed packet: %r", raw)
                 continue
 
             rvec, tvec, screen_xy = solveController(blobs)
 
             if screen_xy is not None:
-                on_pose_solved(screen_xy)  
-            else: 
-                on_no_lock() 
+                on_pose_solved(screen_xy)
+            else:
+                on_no_lock()
 
+                if button:
+                    onButton(button)
+                    
             frames += 1
             elapsed = time.time() - t0
             if elapsed >= 5.0:
