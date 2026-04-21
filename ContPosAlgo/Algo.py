@@ -205,7 +205,7 @@ dataq = queue.Queue()
 def worker():
     while True:
         data: bytearray = dataq.get()
-        print('Processing packet')
+        # print('Processing packet')
 
         blobs, button = parse_packet(data)
         if blobs is None:
