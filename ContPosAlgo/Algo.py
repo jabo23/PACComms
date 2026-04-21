@@ -31,6 +31,8 @@ import time
 import sys
 import logging
 import pyautogui
+import asyncio
+from bleak import *
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,11 +41,9 @@ logging.basicConfig(
 )
 log = logging.getLogger("controller")
 
-
-# Serial / Bluetooth device the ESP32 appears on after RFCOMM binding.
-# Run: sudo rfcomm bind 0 <ESP32_BT_MAC> 1
-SERIAL_PORT   = "/dev/rfcomm0"
-BAUD_RATE     = 115200          # Must match ESP32 Serial.begin()
+# BLE comms with controller
+DEVICE_NAME = "PACController"
+DATA_CHARACTERISTIC_UUID = 'ffeddbc9-b7a5-9381-7f6d-5b4937251301'
 
 # PixArt sensor resolution 
 # https://pmc.ncbi.nlm.nih.gov/articles/PMC7218719/ this better be right
@@ -88,12 +88,14 @@ def parse_packet(data: bytearray):
     Returns (blobs, button) or (None, 0) if malformed.
     """
     try:
-        line = data.decode("ascii", errors="ignore").strip()
-        values = line.split(",")
+        # print(f'In: {data}')
+        values = [int(b) for b in data]
+        # print(values)
+        # print(f'Out: {values}')
         if len(values) != 20:
             return None, 0
-        button = int(values[0], 16)
-        coords = [int(v, 16) for v in values[4:]]
+        button = values[0]
+        coords = values[4:]
         blobs = []
         for i in range(0, 16, 4):
             x = coords[i + 0] + coords[i + 1] * 256
@@ -177,63 +179,67 @@ def on_pose_solved(screen_xy):
 
 def onButton(button: int):
     if button == 1:
-        pyautogui.click(_pause=False)
+        pyautogui.mouseDown()
+    else:
+        pyautogui.mouseUp()
 
 def on_no_lock():
     pass
 
-def run_bluetooth():
-    """Open the Bluetooth serial port and process incoming data."""
-    log.info("Opening %s at %d baud...", SERIAL_PORT, BAUD_RATE)
-    try:
-        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1.0)
-    except serial.SerialException as e:
-        log.error("Could not open serial port: %s", e)
-        log.error("Make sure you have run:  sudo rfcomm bind 0 <ESP32_MAC> 1")
-        sys.exit(1)
+class Connection:
+    def __init__(self):
+        self.status: bool = False
 
-    log.info("Connected. Waiting for data...")
-    frames = 0
-    t0 = time.time()
+    def set_status(self, val: bool):
+        self.status = val
 
+    def get_status(self) -> bool:
+        return self.status
 
-    try:
-        while True:
-            raw = ser.readline()
-            if not raw:
-                continue
+stop_event = asyncio.Event()
 
-            blobs, button = parse_packet(raw)
-            if not raw:
-                continue
+def on_recv(sender: BleakGATTCharacteristic, data: bytearray):
+    print(f'From {sender}: {parse_packet(data)}')
+    
+    blobs, button = parse_packet(data)
+    if blobs is None:
+        log.warning("Malformed packet: %r", data)
+        return
 
-            blobs, button = parse_packet(raw)
-            if blobs is None:
-                log.warning("Malformed packet: %r", raw)
-                continue
+    rvec, tvec, screen_xy = solveController(blobs)
 
-            rvec, tvec, screen_xy = solveController(blobs)
+    if screen_xy is not None:
+        onButton(button)
+        on_pose_solved(screen_xy)
+    else:
+        on_no_lock()
 
-            if screen_xy is not None:
-                on_pose_solved(screen_xy)
-            else:
-                on_no_lock()
+async def run_bluetooth():
 
-                if button:
-                    onButton(button)
-                    
-            frames += 1
-            elapsed = time.time() - t0
-            if elapsed >= 5.0:
-                log.info("--- %.1f FPS ---", frames / elapsed)
-                frames = 0
-                t0 = time.time()
+    disconnect_event = asyncio.Event()
+    connection = Connection()
 
-    except KeyboardInterrupt:
-        log.info("Stopped by user.")
-    finally:
-        ser.close()
+    def on_disconnect(client: BLEDevice):
+        print(f'Disconnected from {client.address}')
+        connection.set_status(False)
+        pyautogui.mouseUp()
+        disconnect_event.set()
+
+    async def on_connect(device: BLEDevice, advertising_data):
+        if device.name == DEVICE_NAME and not connection.get_status():
+            connection.set_status(True)
+            async with BleakClient(device, disconnected_callback=on_disconnect) as client:
+                print(f'Connected to {client.address}')
+                await client.start_notify(DATA_CHARACTERISTIC_UUID, on_recv)
+                await disconnect_event.wait()
+        pass
+
+    async with BleakScanner(on_connect) as scanner:
+        await stop_event.wait()
 
 
 if __name__ == "__main__":
-    run_bluetooth()
+    try:
+        asyncio.run(run_bluetooth())
+    except KeyboardInterrupt:
+        stop_event.set()
