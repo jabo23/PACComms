@@ -48,8 +48,8 @@ DATA_CHARACTERISTIC_UUID = 'ffeddbc9-b7a5-9381-7f6d-5b4937251301'
 
 # PixArt sensor resolution 
 # https://pmc.ncbi.nlm.nih.gov/articles/PMC7218719/ this better be right
-SENSOR_W = 1024
-SENSOR_H = 768
+SENSOR_W = 1023
+SENSOR_H = 767
 
 pyautogui.FAILSAFE = False # prevents crash at corners
 pyautogui.PAUSE = 0 # because pyautogui is SLOOOOWWWWWWW by default for some reason
@@ -57,8 +57,8 @@ pyautogui.PAUSE = 0 # because pyautogui is SLOOOOWWWWWWW by default for some rea
 SCREEN_W, SCREEN_H = pyautogui.size() #gets screen resolution
 
 # Physical IR LED positions in the WORLD frame (metres, origin = top-left LED).
-LED_SPACING_X = 0.20   # metres between left and right LEDs
-LED_SPACING_Y = 0.35 # metres between top and bottom LEDs
+LED_SPACING_X = 0.24   # metres between left and right LEDs
+LED_SPACING_Y = 0.12 # metres between top and bottom LEDs
 # These are estimates based on our screen size if it is rotated
 # update for accuracy on actual DEMO !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -90,23 +90,29 @@ def parse_packet(data: bytearray):
     Returns (blobs, button) or (None, 0) if malformed.
     """
     try:
-        # print(f'In: {data}')
-        values = [int(b) for b in data]
-        # print(values)
-        # print(f'Out: {values}')
-        if len(values) != 20:
-            return None, 0
-        button = values[0]
-        coords = values[4:]
-        blobs = []
-        for i in range(0, 16, 4):
-            x = coords[i + 0] + coords[i + 1] * 256
-            y = coords[i + 2] + coords[i + 3] * 256
-            if x < 2000 and y < 2000:
-                blobs.append((x, y))
-        return blobs, button
+
+        samples = [data[offset:(offset+20)] for offset in range(0, len(data), 20)]
+
+        ret = []
+
+        for sample in samples:
+            values = [int(b) for b in sample]
+            if len(values) != 20:
+                return None
+            button = values[0]
+            delay = values[2]
+            coords = values[4:]
+            blobs = []
+            for i in range(0, 16, 4):
+                x = coords[i + 0] + coords[i + 1] * 256
+                y = coords[i + 2] + coords[i + 3] * 256
+                if x < 2000 and y < 2000:
+                    blobs.append((x, y))
+            ret.append((blobs, button, delay))
+
+        return ret
     except ValueError:
-        return None, 0
+        return None
 
 
 def solveController(blobs):
@@ -123,7 +129,7 @@ def solveController(blobs):
       - screen_xy: estimated aim point as (x, y) fraction of screen (0.0-1.0)
     """
     if len(blobs) < 3: #immediate FAIL on less than 3 blobs (pnp req 3 or more to work)
-        log.debug("Not enough blobs: %d", len(blobs))
+        # log.debug("Not enough blobs: %d", len(blobs))
         return None, None, None
 
     if len(blobs) == 4:
@@ -171,13 +177,24 @@ def sort_quad(blobs):
     return np.array([top[0], top[1], bottom[1], bottom[0]], dtype=np.float64)
 
 
-def on_pose_solved(screen_xy):
+ALPHA = 0.7
+
+def on_pose_solved(screen_xy, oldpx, oldpy):
     x_frac, y_frac = screen_xy
     x_frac = max(0.0, min(1.0, x_frac))
     y_frac = max(0.0, min(1.0, y_frac))
-    px = int(x_frac * SCREEN_W)
+    px = SCREEN_W - int(x_frac * SCREEN_W)
     py = int(y_frac * SCREEN_H)
+
+    if oldpx < 0 or oldpy < 0:
+        oldpx = px
+        oldpy = py
+    px = px * ALPHA + oldpx * (1 - ALPHA)
+    py = py * ALPHA + oldpy * (1 - ALPHA)
+
     pyautogui.moveTo(px, py, _pause=False)
+
+    return px, py
 
 def onButton(button: int):
     if button == 1:
@@ -201,32 +218,60 @@ class Connection:
 stop_event = asyncio.Event()
 
 dataq = queue.Queue()
+pointq = queue.Queue()
 
+# One of these controls the mouse
+def mouser():
+    oldpx = -1
+    oldpy = -1
+
+    while True:
+        screen_xy, button, delay = pointq.get()
+
+        # Same delay as the sample was read in,
+        # shave off slightly so things don't get backed up
+        # (and not too much that its noticeable)
+        time.sleep((delay - 0.5) / 1000.0)
+
+        if screen_xy is not None:
+            oldpx, oldpy = on_pose_solved(screen_xy, oldpx, oldpy)
+        onButton(button)
+
+        pointq.task_done()
+
+# Each of these bad boyz runs the algorithm.
+# Multiple of these bad boyz are needed since this is
+# somewhat computationally intensive
 def worker():
     while True:
-        data: bytearray = dataq.get()
-        # print('Processing packet')
+        blobs, button, delay = dataq.get()
 
-        blobs, button = parse_packet(data)
-        if blobs is None:
-            log.warning("Malformed packet: %r", data)
-            return
+        blobs = list(filter(lambda b: b[0] != 1023 and b[1] != 1023, blobs))
+        print(blobs)
 
         rvec, tvec, screen_xy = solveController(blobs)
 
-        if screen_xy is not None:
-            onButton(button)
-            on_pose_solved(screen_xy)
-        else:
-            on_no_lock()
+        pointq.put((screen_xy, button, delay))
         
         dataq.task_done()
 
+
+
 def on_recv(sender: BleakGATTCharacteristic, data: bytearray):
-    t0 = time.time()
-    # print(f'From {sender}: {parse_packet(data)}')
+    # print(f'From {sender}: {data}; Length: {len(data)}')
+    # print(f'Parsed: {parse_packet(data)}')
     # print(f'Recieved packet! Queue length: {dataq.qsize()}')
-    dataq.put(data)
+
+    # Parse packet
+    samples = parse_packet(data)
+    if samples is None:
+        log.warning("Malformed packet: %r", data)
+        return
+    
+
+    for sample in samples:
+        # print(sample)
+        dataq.put(sample)
 
 async def run_bluetooth():
 
@@ -255,6 +300,7 @@ async def run_bluetooth():
 if __name__ == "__main__":
     for i in range(4):
         threading.Thread(target=worker, daemon=True).start()
+    threading.Thread(target=mouser, daemon=True).start()
     try:
         asyncio.run(run_bluetooth())
     except KeyboardInterrupt:
