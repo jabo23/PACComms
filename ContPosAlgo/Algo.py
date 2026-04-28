@@ -58,7 +58,7 @@ SCREEN_W, SCREEN_H = pyautogui.size() #gets screen resolution
 
 # Physical IR LED positions in the WORLD frame (metres, origin = top-left LED).
 LED_SPACING_X = 0.24   # metres between left and right LEDs
-LED_SPACING_Y = 0.12 # metres between top and bottom LEDs
+LED_SPACING_Y = 0.32   # metres between top and bottom LEDs
 # These are estimates based on our screen size if it is rotated
 # update for accuracy on actual DEMO !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -244,8 +244,13 @@ def mouser():
 # Multiple of these bad boyz are needed since this is
 # somewhat computationally intensive
 def worker():
+    oldpx = -1
+    oldpy = -1
+
     while True:
         blobs, button, delay = dataq.get()
+        t0 = time.time()
+
         print(f'Worker: {dataq.qsize()}')
 
         blobs = list(filter(lambda b: b[0] != 1023 and b[1] != 1023, blobs))
@@ -254,7 +259,11 @@ def worker():
         rvec, tvec, screen_xy = solveController(blobs)
 
         if screen_xy is not None:
-            pointq.put((screen_xy, button, delay))
+            td = time.time() - t0
+            time.sleep((delay - 0.5) / 1000.0 - td)
+            oldpx, oldpy = on_pose_solved(screen_xy, oldpx, oldpy)
+            onButton(button)
+            # pointq.pu?t((screen_xy, button, delay))
         
         dataq.task_done()
 
@@ -302,7 +311,7 @@ async def run_bluetooth():
 
 if __name__ == "__main__":
     threading.Thread(target=worker, daemon=True).start()
-    threading.Thread(target=mouser, daemon=True).start()
+    # threading.Thread(target=mouser, daemon=True).start()
     try:
         asyncio.run(run_bluetooth())
     except KeyboardInterrupt:
