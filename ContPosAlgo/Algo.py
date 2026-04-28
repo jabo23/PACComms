@@ -189,8 +189,8 @@ def on_pose_solved(screen_xy, oldpx, oldpy):
     if oldpx < 0 or oldpy < 0:
         oldpx = px
         oldpy = py
-    px = px * ALPHA + oldpx * (1 - ALPHA)
-    py = py * ALPHA + oldpy * (1 - ALPHA)
+    px = int(px * ALPHA + oldpx * (1 - ALPHA))
+    py = int(py * ALPHA + oldpy * (1 - ALPHA))
 
     pyautogui.moveTo(px, py, _pause=False)
 
