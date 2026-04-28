@@ -234,8 +234,8 @@ def mouser():
         # (and not too much that its noticeable)
         time.sleep((delay - 0.5) / 1000.0)
 
-        if screen_xy is not None:
-            oldpx, oldpy = on_pose_solved(screen_xy, oldpx, oldpy)
+        # Manipulate mouse
+        oldpx, oldpy = on_pose_solved(screen_xy, oldpx, oldpy)
         onButton(button)
 
         pointq.task_done()
@@ -253,7 +253,8 @@ def worker():
 
         rvec, tvec, screen_xy = solveController(blobs)
 
-        pointq.put((screen_xy, button, delay))
+        if screen_xy is not None:
+            pointq.put((screen_xy, button, delay))
         
         dataq.task_done()
 
