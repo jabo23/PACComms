@@ -227,6 +227,7 @@ def mouser():
 
     while True:
         screen_xy, button, delay = pointq.get()
+        print(f'Mouser: {pointq.qsize()}')
 
         # Same delay as the sample was read in,
         # shave off slightly so things don't get backed up
@@ -245,6 +246,7 @@ def mouser():
 def worker():
     while True:
         blobs, button, delay = dataq.get()
+        print(f'Worker: {dataq.qsize()}')
 
         blobs = list(filter(lambda b: b[0] != 1023 and b[1] != 1023, blobs))
         print(blobs)
