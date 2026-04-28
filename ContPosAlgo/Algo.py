@@ -301,8 +301,7 @@ async def run_bluetooth():
 
 
 if __name__ == "__main__":
-    for i in range(4):
-        threading.Thread(target=worker, daemon=True).start()
+    threading.Thread(target=worker, daemon=True).start()
     threading.Thread(target=mouser, daemon=True).start()
     try:
         asyncio.run(run_bluetooth())
