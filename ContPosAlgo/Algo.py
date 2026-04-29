@@ -183,8 +183,8 @@ def on_pose_solved(screen_xy, oldpx, oldpy):
     x_frac, y_frac = screen_xy
     x_frac = max(0.0, min(1.0, x_frac))
     y_frac = max(0.0, min(1.0, y_frac))
-    px = SCREEN_W - int(x_frac * SCREEN_W)
-    py = int(y_frac * SCREEN_H)
+    px = SCREEN_W * 2 / 3 - int(x_frac * SCREEN_W / 3)
+    py = SCREEN_H / 3 + int(y_frac * SCREEN_H / 3)
 
     if oldpx < 0 or oldpy < 0:
         oldpx = px
