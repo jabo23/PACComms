@@ -249,18 +249,15 @@ def worker():
 
     while True:
         blobs, button, delay = dataq.get()
-        t0 = time.time()
+        # t0 = time.time()
 
-        print(f'Worker: {dataq.qsize()}')
-
-        blobs = list(filter(lambda b: b[0] != 1023 and b[1] != 1023, blobs))
-        print(blobs)
+        print(f'Worker: {dataq.qsize()} {blobs}')
 
         rvec, tvec, screen_xy = solveController(blobs)
 
         if screen_xy is not None:
-            td = time.time() - t0
-            time.sleep((delay - 0.5) / 1000.0 - td)
+            # td = time.time() - t0
+            # time.sleep((delay - 0.5) / 1000.0 - td)
             oldpx, oldpy = on_pose_solved(screen_xy, oldpx, oldpy)
             onButton(button)
             # pointq.pu?t((screen_xy, button, delay))
@@ -280,10 +277,15 @@ def on_recv(sender: BleakGATTCharacteristic, data: bytearray):
         log.warning("Malformed packet: %r", data)
         return
     
+    for blobs, button, delay in samples:
 
-    for sample in samples:
+        blobs = list(filter(lambda b: b[0] != 1023 and b[1] != 1023, blobs))
+
+        if len(blobs) < 3:
+            continue
+
         # print(sample)
-        dataq.put(sample)
+        dataq.put((blobs, button, delay))
 
 async def run_bluetooth():
 
