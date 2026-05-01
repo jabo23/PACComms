@@ -56,6 +56,8 @@ pyautogui.PAUSE = 0 # because pyautogui is SLOOOOWWWWWWW by default for some rea
 
 SCREEN_W, SCREEN_H = pyautogui.size() #gets screen resolution
 
+print(f'w: {SCREEN_W}, h: {SCREEN_H}')
+
 # Physical IR LED positions in the WORLD frame (metres, origin = top-left LED).
 LED_SPACING_X = 0.24   # metres between left and right LEDs
 LED_SPACING_Y = 0.32   # metres between top and bottom LEDs
@@ -183,14 +185,16 @@ def on_pose_solved(screen_xy, oldpx, oldpy):
     x_frac, y_frac = screen_xy
     x_frac = max(0.0, min(1.0, x_frac))
     y_frac = max(0.0, min(1.0, y_frac))
-    px = SCREEN_W * 2 / 3 - int(x_frac * SCREEN_W * 3)
-    py = SCREEN_H / 3 + int(y_frac * SCREEN_H * 3)
+    px = SCREEN_W - int(x_frac * SCREEN_W)
+    py = int(y_frac * SCREEN_H)
 
     if oldpx < 0 or oldpy < 0:
         oldpx = px
         oldpy = py
     px = int(px * ALPHA + oldpx * (1 - ALPHA))
     py = int(py * ALPHA + oldpy * (1 - ALPHA))
+
+    # print(f'Before: ({x_frac}, {y_frac}); After: ({px}, {py})')
 
     pyautogui.moveTo(px, py, _pause=False)
 
@@ -218,27 +222,6 @@ class Connection:
 stop_event = asyncio.Event()
 
 dataq = queue.Queue()
-pointq = queue.Queue()
-
-# One of these controls the mouse
-def mouser():
-    oldpx = -1
-    oldpy = -1
-
-    while True:
-        screen_xy, button, delay = pointq.get()
-        print(f'Mouser: {pointq.qsize()}')
-
-        # Same delay as the sample was read in,
-        # shave off slightly so things don't get backed up
-        # (and not too much that its noticeable)
-        time.sleep((delay - 0.5) / 1000.0)
-
-        # Manipulate mouse
-        oldpx, oldpy = on_pose_solved(screen_xy, oldpx, oldpy)
-        onButton(button)
-
-        pointq.task_done()
 
 # Each of these bad boyz runs the algorithm.
 # Multiple of these bad boyz are needed since this is
@@ -251,7 +234,7 @@ def worker():
         blobs, button, delay = dataq.get()
         # t0 = time.time()
 
-        print(f'Worker: {dataq.qsize()} {blobs}')
+        # print(f'Worker: {dataq.qsize()} {blobs}')
 
         rvec, tvec, screen_xy = solveController(blobs)
 
@@ -260,7 +243,6 @@ def worker():
             # time.sleep((delay - 0.5) / 1000.0 - td)
             oldpx, oldpy = on_pose_solved(screen_xy, oldpx, oldpy)
             onButton(button)
-            # pointq.pu?t((screen_xy, button, delay))
         
         dataq.task_done()
 
@@ -284,7 +266,6 @@ def on_recv(sender: BleakGATTCharacteristic, data: bytearray):
         if len(blobs) < 3:
             continue
 
-        # print(sample)
         dataq.put((blobs, button, delay))
 
 async def run_bluetooth():
@@ -313,7 +294,6 @@ async def run_bluetooth():
 
 if __name__ == "__main__":
     threading.Thread(target=worker, daemon=True).start()
-    # threading.Thread(target=mouser, daemon=True).start()
     try:
         asyncio.run(run_bluetooth())
     except KeyboardInterrupt:
